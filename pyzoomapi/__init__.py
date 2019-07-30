@@ -1,6 +1,9 @@
+import warnings
 import platform
 import json
 import os
+
+SSL_VERIFY = True
 
 class ZoomAPI():
     protocol = 'https'
@@ -24,14 +27,14 @@ class ZoomAPI():
 
     @property
     def apibase(self):
-        return '{protocol}://{server}/api/v1'.format(protocol=ZoomAPI.protocol, server=ZoomAPI.server)
+        return '{protocol}://{server}/api/v2'.format(protocol=ZoomAPI.protocol, server=ZoomAPI.server)
 
     def __repr__(self):
         return '<ZoomAPI:%s>' % self.token
 
 class Session():
     def __init__(self, language, callback_url = None, callback_method = None,
-                    callback_format = None, callback_headers = None, punctuation = False, zoom_api = None):
+                    callback_format = None, callback_headers = None, punctuation = False, zoom_api = None, zoom_id = None):
         """ Initialize a new Speech to Text session """
 
         from requests import Session
@@ -68,27 +71,41 @@ class Session():
         if callback_headers: session_setup['callback_headers'] = callback_headers
         if punctuation: session_setup['punctuation'] = punctuation
 
-        post_session = self.POST(self._zoom_api.apibase + '/speech-to-text/session/', json_data=session_setup)
+        if not zoom_id:
+            post_session = self.POST(self._zoom_api.apibase + '/speech-to-text/session/', json_data=session_setup)
 
-        try:
-            self._zoom_session = post_session.json()
-        except ValueError:
-            raise SessionException("Session error: NO JSON RESPONSE")
+            try:
+                self._zoom_session = post_session.json()
+            except ValueError:
+                raise SessionException("Session error: NO JSON RESPONSE")
 
-        if self._zoom_session.get('error'):
-            raise SessionException("Session error: %s" % self._zoom_session.get('error_message', self._zoom_session.get('error', 'Unknown')))
+            if self._zoom_session.get('error'):
+                raise SessionException("Session error: %s" % self._zoom_session.get('error_message', self._zoom_session.get('error', 'Unknown')))
 
-        if not self._zoom_session.get('sessionId'):
-            raise SessionException("Session error: Did not receive a session ID")
+            if not self._zoom_session.get('zoom_id'):
+                raise SessionException("Session error: Did not receive a Zoom ID")
 
-        if not self._zoom_session.get('language'):
-            raise SessionException("Session error: Did not receive a language code")
+            if not self._zoom_session.get('language'):
+                raise SessionException("Session error: Did not receive a language code")
+        else:
+            self._zoom_session = {
+                "language": language,
+                "sessionId": zoom_id,
+                "zoom_id": zoom_id
+            }
+            self._upload_success = True
 
-    def GET(self, url):
+    def GET(self, url, accept='application/json'):
         from requests.exceptions import ConnectTimeout, ReadTimeout
 
         try:
-            return self.request_session.get(url, timeout=self._zoom_api._timeout)
+            return self.request_session.get(
+                url,
+                verify=SSL_VERIFY,
+                timeout=self._zoom_api._timeout,
+                headers={
+                    'Accept': accept
+                })
         except ConnectTimeout:
             raise ApiTimeoutException("Unable to connect in time")
         except ReadTimeout:
@@ -104,7 +121,7 @@ class Session():
         if files: post_args['files'] = files
 
         try:
-            return self.request_session.post(url, **post_args)
+            return self.request_session.post(url, verify=SSL_VERIFY, **post_args)
         except ConnectTimeout:
             raise ApiTimeoutException("Unable to connect in time")
         except ReadTimeout:
@@ -170,13 +187,25 @@ class Session():
 
         return Transcript(status.get('results'))
 
+    def get_subtitle(self, subtitle_type='text/vtt'):
+        if self._upload_success != True:
+            raise NoFileUploadedException()
+
+        subtitle = self.GET(self.session_url, subtitle_type)
+        return subtitle.text
+
     @property
     def session_url(self):
         return self._zoom_api.apibase + '/speech-to-text/session/' + self.session_id
 
     @property
     def session_id(self):
-        return self._zoom_session['sessionId']
+        warnings.warn("session_id is going to be deprecated, start using zoom_id", DeprecationWarning, stacklevel=2)
+        return self.zoom_id
+
+    @property
+    def zoom_id(self):
+        return self._zoom_session['zoom_id']
 
     @property
     def language(self):

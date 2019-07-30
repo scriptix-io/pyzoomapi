@@ -30,7 +30,7 @@ session.upload('/tmp/news_broadcast.mp3')
 
 # Poll for result
 while True:
-  if sessions.is_done():
+  if session.is_done():
     break
   sleep(1)
 
@@ -38,7 +38,7 @@ while True:
 transcript = session.get_transcript()
 
 # Print transcript to console
-trancript.pprint()
+transcript.pprint()
 ```
 
 ## Examples
